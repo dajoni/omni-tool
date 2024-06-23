@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+
+import sys
+import importlib.util
+import os
+import logging
+import argparse
+
+
+class CommandDispatcher:
+    def __init__(self, module_dir):
+        self.logger = logging.getLogger(CommandDispatcher.__name__)
+        self.module_dir = module_dir
+        self.commands = {}
+        self._load_modules()
+
+    def _load_modules(self):
+        for filename in os.listdir(self.module_dir):
+            if filename.endswith('.py') and not filename.startswith('__'):
+                module_name = filename[:-3]  # Remove the .py extension
+                spec = importlib.util.spec_from_file_location(module_name, os.path.join(self.module_dir, filename))
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                spec.loader.exec_module(module)
+                self.logger.debug('Loaded module "{}"'.format(module_name))
+                self._register_commands(module)
+
+    def _register_commands(self, module):
+        for name in dir(module):
+            obj = getattr(module, name)
+            if hasattr(obj, 'COMMANDS'):
+                self.logger.debug('Registering commands for "{}"'.format(obj.__name__))
+                for command in getattr(obj, 'COMMANDS'):
+                    command_name = f"{obj.__name__} {command}"
+                    self.logger.debug('Registering command "{}"'.format(command_name))
+                    self.commands[command_name] = obj()
+
+    def dispatch(self, component, command, arguments=None):
+        command_key = f"{component} {command}"
+        self.logger.debug('Dispatching command "{}"'.format(command_key))
+        if command_key in self.commands:
+            self.commands[command_key].execute(command, arguments)
+        else:
+            print("Command not found.")
+
+    def list_commands(self):
+        if not self.commands:
+            print("No commands loaded.")
+            return
+        print("Available component and command combinations:")
+        for command, cmd_obj in self.commands.items():
+            module_name = command.split()[0]
+            print(f"  {command}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="System Helper Tool")
+    parser.add_argument('component', type=str, help='The component to run the command on.')
+    parser.add_argument('command', type=str, help='The command to execute on the component.')
+    parser.add_argument('arguments', type=str, nargs='*', help='The arguments to pass to the command.')
+    parser.add_argument('-d', '--debug', action='store_true', default=False, help='Enable debug mode.')
+    parser.add_argument('-l', '--list', action='store_true', default=False, help='List available commands.')
+
+    args = parser.parse_args()
+
+    if args.debug:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
+
+    module_dir = './components/'  # Update this path to your directory
+    dispatcher = CommandDispatcher(module_dir)
+
+    if args.list:
+        dispatcher.list_commands()
+        sys.exit(0)
+
+    dispatcher.dispatch(args.component, args.command, args.arguments)
